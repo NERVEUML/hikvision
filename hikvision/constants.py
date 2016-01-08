@@ -20,3 +20,12 @@ DEFAULT_HEADERS = {
     'Content-Type': "application/xml; charset='UTF-8'",
     'Accept': "*/*"
 }
+STATUS_CODES = {
+        1:"OK",
+        2:"Busy",
+        3:"DeviceError",
+        4:"InvalidOperation",
+        5:"InvalidXMLFormat",
+        6:"InvalidXMLContent",
+        7:"RebootRequired"
+}
