@@ -2,7 +2,7 @@
 hikvision.api
 ~~~~~~~~~~~~~~~~~~~~
 
-Provides methods for interacting with hikvision
+Provides methods for interacting with hikvision IP cameras
 
 Copyright (c) 2015 Finbarr Brady <https://github.com/fbradyirl>
 Licensed under the MIT license.
@@ -70,7 +70,7 @@ class CreateDevice(object):
     def __init__(self, host=None, port=DEFAULT_PORT,
                  username=None, password=None, is_https=False,
                  sensitivity_level=DEFAULT_SENS_LEVEL):
-        #enable_logging()
+        # enable_logging()
         _LOGGING.info("Initialising new hikvision camera client")
 
         if not host:
@@ -101,11 +101,11 @@ class CreateDevice(object):
 
         try:
             _LOGGING.info("Going to probe device to test connection")
-            version = self.get_version()
-            enabled = self.is_motion_detection_enabled()
+            # version = self.get_version()
+            # enabled = self.is_motion_detection_enabled()
             _LOGGING.info("Connected OK!")
-            _LOGGING.info("Camera firmware version: %s", version)
-            _LOGGING.info("Motion Detection enabled: %s", enabled)
+            # _LOGGING.info("Camera firmware version: %s", version)
+            # _LOGGING.info("Motion Detection enabled: %s", enabled)
 
         except ReConnError as conn_err:
             # _LOGGING.exception("Unable to connect to %s", host)
@@ -116,7 +116,7 @@ class CreateDevice(object):
         Returns the firmware version running on the camera
         """
         return self.get_about(element_to_query='firmwareVersion')
-
+    
     #services:
         #system
         #network
@@ -138,7 +138,7 @@ class CreateDevice(object):
         #ptz
         #maybe streaming
     def responsecached(self, path ):
-        if self._responsecache[path] != undefined:
+        if self._responsecache[path]:
             return self._responsecache[path]
         else:
             return False
@@ -146,8 +146,10 @@ class CreateDevice(object):
     def cacheresponse(self, path, response):
         self._responsecache[path] = response.text
         #tree = ElementTree.fromstring(xmltext)
+    def dictset( self, d ):
+        pass
 
-    def set(self, identifier, value):
+    def set(self, identifier, value=None, **kwargs ):
         #trickier! Some stuff requires more xml around it
         #probably just implement it very naively for now, our needs aren't complicated
 
@@ -160,28 +162,38 @@ class CreateDevice(object):
         #   a sub element of "deviceName"
         #   and a value for deviceName of "mikewuzhere"
         #
+        if "flags" in kwargs and "sendexact" in kwargs["flags"]:
+            sendexact = True
+        else:
+            sendexact = False
+
         if "/" in identifier and "." in identifier:
             path, searchelements = identifier.split(".",1)
             elements = searchelements.split(".") #if identifier has more separators, split on them
-        elif "." in identifier:
-            #recursive run, need to build up xml
-            elements = identifier.split(".")
-            raise Exception("Not implemented yet and I'm not sure how it will be anyway")
+        elif "/" in identifier:
+            path = identifier
+            searchelements = None
+            elements = None
         else:
-            raise Exception("You can't just set paths! Or can you? Maybe you can set time?")
+            pass #it's fine (reboot, for example, uses this)
 
         if path[0] != "/":
             path = "/" + path
+        if elements and not sendexact:
+            xmldata = ElementTree.Element( path.split("/")[-1] )
+            last = ElementTree.SubElement(xmldata, elements[0]) #absolutely required to have something to set
+            for e in elements[1:]: #and for any subidentifiers, generate the xmltags for it
+                last = ElementTree.SubElement(xmldata, e)
+            last.text = value #and set the value once we're at the correct identifier
+            data = ElementTree.tostring(xmldata)
+            _LOGGING.debug("Sending xml:\t", data)
+        else:
+            data = None
+        
+        if sendexact:
+            data = value
 
-        xmldata = ElementTree.Element( path.split("/")[-1] )
-
-        last = ElementTree.SubElement(xmldata, elements[0]) #absolutely required to have something to set
-        for e in elements[1:]: #and for any subidentifiers, generate the xmltags for it
-            last = ElementTree.SubElement(xmldata, e)
-        last.text = value #and set the value once we're at the correct identifier
-
-        data = ElementTree.tostring(xmldata)
-        _LOGGING.debug("Sending xml:\t", data)
+        _LOGGING.debug("Sending data:\t", data)
 
         text = self.putrequest(path, data)
         if text is None:
@@ -190,10 +202,11 @@ class CreateDevice(object):
         return int(value)
 
 
-    def putrequest(self, path, data):
+    def putrequest(self, path, data=None):
         url = self._base + path
         _LOGGING.info('url: %s', url)
-
+        _LOGGING.info('data: %s', data)
+        
         response = requests.put( url, data, auth=HTTPBasicAuth(self._username, self._password))
 
         _LOGGING.debug('response: %s', response)
@@ -202,7 +215,7 @@ class CreateDevice(object):
         if response.status_code != 200:
             #TODO should raise an exception, and get and whatever should handle it
             log_response_errors(response)
-            return None
+            raise Exception(response.text)
         return response.text
 
     def get(self,identifier):
@@ -429,3 +442,121 @@ class CreateDevice(object):
             _LOGGING.error(
                 'There was a problem parsing the response: %s', attib_err)
             return
+    def reboot(self):
+        self.set("System/reboot",None)
+
+    def getImageFlip(self,channel=1):
+        c = self.get("Image/channels/" + str(channel) + "/ImageFlip")
+        return c
+
+    def setImageFlip(self,value=False,channel=1):
+        """set imageFlip to False (disabled), "LEFTRIGHT", "UPDOWN", or "CENTER" """
+        enabled = True if value and not value.lower() in ["false","0","f","disable","disabled"] else False
+        enablestring = "true" if enabled else "false"
+        xmlstr = "<ImageFlip>" + "<enabled>" + enablestring + "</enabled>"
+        if enabled:
+                xmlstr += "<ImageFlipStyle>"  + value + "</ImageFlipStyle>"
+
+        xmlstr += "</ImageFlip>"
+        c = self.set("Image/channels/" + str(channel) + "/ImageFlip", xmlstr,flags="sendexact")
+        return c
+
+    def setPTZAbs(self,elevation,azimuth,zoom,channel=1):
+        #in tenths of a degree, so 90.0* == 900 input
+        #elevation only accepts values between 0 and 900
+        #azimuth will only accept values between 0 and 3600
+        #zoom, i don't know. haven't tested at all
+        #values past those limits get converted to the limit they are closest to, e.g. negatives to 0, elevation > 900 to 900
+
+        xmlstr = "<PTZData><AbsoluteHigh>" +\
+                "<elevation>" + str(elevation) + "</elevation>"+\
+                "<azimuth>"  + str(azimuth) + "</azimuth>"+\
+                "<absoluteZoom>" + str(zoom) + "</absoluteZoom>"+\
+                "</AbsoluteHigh></PTZData>"
+        c = self.set("ptzctrl/channels/" + str(channel) + "/absolute", xmlstr,flags="sendexact")
+        return c
+
+    def setDHCP(self):
+        c = self.set("Network/interfaces/1/IPAddress.addressingType",
+                "<IPAddress><ipVersion>v4</ipVersion><addressingType>dynamic</addressingType></IPAddress>",
+                flags="sendexact")
+        if c == 7:
+            self.rebootneeded = True
+            return True
+        else:
+            return
+
+    def setNTP(self,ntp_server="0.north-america.pool.ntp.org",tz="EST-5:00:00"):
+        c1 = self.set("System/time.timeMode",
+                "<Time><timeMode>NTP</timeMode><timeZone>" + tz + "</timeZone></Time>",
+                flags="sendexact")
+        return c1
+
+    def setNTPServer(self,id=1,ntp_server="10.250.249.1"):
+        c1 = self.set("System/time/ntpServers/" + str(id) ,
+                "<NTPServer><id>" + str(id) + "</id><addressingFormatType>ipaddress</addressingFormatType><ipAddress>" + ntp_server + "</ipAddress></NTPServer>", flags="sendexact")
+        return c1
+
+    def getNTPServer(self,id=1):
+        c1 = self.get("System/time/ntpServers/" + str(id))
+        return c1
+
+    def setSSH(self, enable):
+        """ not tested"""
+        if enable:
+            enablestr = "true"
+        else:
+            enablestr = "false"
+        return self.set("ISAPI/System/Network/ssh.enabled",enablestr)
+
+    def getSSH(self):
+        """ not tested"""
+        return self.get("ISAPI/System/Network/ssh")
+
+    def setName(self,name):
+        return self.set("System/deviceInfo.deviceName",name)
+
+    def getPresets(self):
+        #/PTZCtrl/channels/ <ID> /presets
+        pass
+
+    def addPreset(self):
+        pass
+
+    def setPreset(self,presetid):
+        #/PTZCtrl/channels/ <ChannelID> /presets/ <PresetID>
+        #if already exists (use getPresets)
+            #then make new preset by posting to /presets
+        pass
+
+    def delPreset(self,presetid):
+        pass
+
+    def runPreset(self,presetid=1,channelid=1):
+        # /PTZCtrl/channels/ <ChannelID> /presets/ <PresetID> /goto
+        #PUT to that URL, no data to make it go to that preset
+        return self.set("/PTZCtrl/channels/" + str(channelid) + "/presets/" + str(presetid) + "/goto")
+
+    def delHomePosition(self):
+        #DELETE to /PTZCtrl/channels/ <ChannelID> /homeposition
+        pass
+
+    def setHomePosition(self):
+        #PUT to /PTZCtrl/channels/ <ChannelID> /homeposition, no data
+        return self.put("/PTZCtrl/channels/" + str(channelid) + "/homeposition")
+
+    def runHomePosition(self):
+        #PUT to /PTZCtrl/channels/ <ChannelID> /homeposition/goto, no data
+        return self.set("/PTZCtrl/channels/" + str(channelid) + "/homeposition/goto")
+
+    def ptzRelative(self,posX,posY,relZ, channel=1):
+        """Move the position (expressed in pixels, posX and posY) to the center of the image by pan and tilt, and set the relative zoom (-100:100)"""
+        """untested"""
+        xmlstr = "<PTZData><Relative>" +\
+                "<positionX>" + str(posX) + "</positionX>"+\
+                "<positionY>"  + str(posY) + "</positionY>"+\
+                "<relativeZoom>" + str(relZ) + "</relativeZoom>"+\
+                "</Relative></PTZData>"
+        c = self.set("ptzctrl/channels/" + str(channel) + "/relative", xmlstr,flags="sendexact")
+        return c
+

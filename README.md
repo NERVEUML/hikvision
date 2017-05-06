@@ -1,3 +1,6 @@
+Introduction
+============
+
 This is a python module providing a basic python
 interface to interact with a Hikvision IP Camera
 
@@ -77,4 +80,4 @@ Add more functions
 Developer
 =========
 
-Copyright (c) 2015 Finbarr Brady, Mike McGinty
+Copyright (c) 2015-2016 Finbarr Brady, Mike McGinty
