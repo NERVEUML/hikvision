@@ -1,0 +1,8 @@
+{
+  "user":"admin",
+  "pw":"yourpasswordhere",
+  "net":"10.250.249.101-132",
+  "ntp_server":"10.250.249.1",
+  "google_oauth_creds_file":"./path-to-creds-file.json",
+  "google_cams_spreadsheet":"https://docs.google.com/spreadsheets/d/yourgoogledocsURLgoeshereandendsin/edit#gid=0"
+}
